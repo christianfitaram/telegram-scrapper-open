@@ -2,13 +2,6 @@
 
 `telegram-scraper` is a Telegram channel ingestion tool for developers who want a reusable pipeline rather than a fixed data source list. It scrapes user-supplied Telegram channels, normalizes messages, can translate and title content with pluggable AI providers, stores records in MongoDB, and can forward inserted articles to downstream webhooks.
 
-## Principles
-
-- No built-in channel list. Users decide which channels to ingest.
-- No committed secrets or environment-specific defaults.
-- Optional integrations stay disabled until the user configures them.
-- Public, contributor-friendly repo structure and project metadata.
-
 ## Features
 
 - Scrape one or more Telegram channels with checkpointed resume state.
