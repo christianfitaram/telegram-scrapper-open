@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import Any, Dict
 
 from telegram_intel_scraper.providers.call_to_webhook import send_to_all_webhooks
@@ -9,6 +8,7 @@ from telegram_intel_scraper.providers.topic_classifier import get_topic
 from telethon import TelegramClient
 
 from telegram_intel_scraper.core.config import Settings
+from telegram_intel_scraper.core.logging import get_logger
 from telegram_intel_scraper.core.mongo import get_articles_collection
 from telegram_intel_scraper.core.state import load_state, save_state
 from telegram_intel_scraper.core.writer import write_jsonl
@@ -16,11 +16,13 @@ from telegram_intel_scraper.repositories.articles_repository import ArticlesRepo
 
 from telegram_intel_scraper.providers.telegram import parse_username, iter_channel_messages
 from telegram_intel_scraper.providers.text_translate_genai import detect_translate_and_title
-from telegram_intel_scraper.providers.text_translate_ollama import detect_translate_and_title_ollama
+from telegram_intel_scraper.providers.text_translate_ollama import detect_translate_and_title_ollama_with_fallback
 from telegram_intel_scraper.providers.title_genai import generate_title_genai
-from telegram_intel_scraper.providers.title_llm import generate_title_ollama
+from telegram_intel_scraper.providers.title_llm import generate_title_ollama_with_fallback
 from telegram_intel_scraper.utils.text import normalize_whitespace, title_heuristic
 from telethon.errors import UsernameInvalidError, UsernameNotOccupiedError
+
+logger = get_logger(__name__)
 
 
 def _resolve_ai_provider(settings: Settings) -> str:
@@ -52,13 +54,24 @@ def _resolve_title(settings: Settings, text: str) -> str:
     if provider == "genai":
         try:
             return generate_title_genai(text, model=getattr(settings, "genai_model", "gemini-2.0-flash"))
-        except Exception:
-            return title_heuristic(text)
+        except Exception as exc:
+            logger.warning("genai title generation failed; trying ollama fallbacks: %s", exc)
+            try:
+                return generate_title_ollama_with_fallback(text, settings.ollama_url)
+            except Exception as fallback_exc:
+                logger.warning("ollama title fallbacks failed; using heuristic: %s", fallback_exc)
+                return title_heuristic(text)
 
     if provider == "ollama":
         try:
-            return generate_title_ollama(text, settings.ollama_url, settings.ollama_model)
-        except Exception:
+            return generate_title_ollama_with_fallback(
+                text,
+                settings.ollama_url,
+                primary_model=settings.ollama_model,
+                include_primary=True,
+            )
+        except Exception as exc:
+            logger.warning("ollama title generation failed; using heuristic: %s", exc)
             return title_heuristic(text)
 
     # heuristic (default)
@@ -85,19 +98,27 @@ def _translate_and_title(settings: Settings, text: str) -> tuple[str, str, str]:
                 model=getattr(settings, "genai_model", "gemini-2.0-flash"),
             )
             return result.language, result.english_text, result.title
-        except Exception:
-            return "unknown", original_text, _resolve_title(settings, original_text)
+        except Exception as exc:
+            logger.warning("genai translation failed; trying ollama fallbacks: %s", exc)
+            try:
+                result = detect_translate_and_title_ollama_with_fallback(original_text, settings.ollama_url)
+                return result.language, result.english_text, result.title
+            except Exception as fallback_exc:
+                logger.warning("ollama translation fallbacks failed; using original text: %s", fallback_exc)
+                return "unknown", original_text, title_heuristic(original_text)
 
     if provider == "ollama":
         try:
-            result = detect_translate_and_title_ollama(
+            result = detect_translate_and_title_ollama_with_fallback(
                 original_text,
                 settings.ollama_url,
-                settings.ollama_model,
+                primary_model=settings.ollama_model,
+                include_primary=True,
             )
             return result.language, result.english_text, result.title
-        except Exception:
-            return "unknown", original_text, _resolve_title(settings, original_text)
+        except Exception as exc:
+            logger.warning("ollama translation failed; using original text: %s", exc)
+            return "unknown", original_text, title_heuristic(original_text)
 
     return "unknown", original_text, _resolve_title(settings, original_text)
 
@@ -122,7 +143,7 @@ async def run_scrape(settings: Settings) -> None:
         for url in settings.channels:
             username = parse_username(url)
             last_id = int(state.get(username, {}).get("last_id", 0))
-            print(f"[{username}] resume after last_id={last_id}")
+            logger.info("[%s] resume after last_id=%s", username, last_id)
             try:
                 async for msg in iter_channel_messages(
                     client,
@@ -131,7 +152,7 @@ async def run_scrape(settings: Settings) -> None:
                     since=settings.scrape_since,
                     until=settings.scrape_until,
                 ):
-                    print(f"[{username}] candidate message id={msg.id} date={msg.date}")
+                    logger.debug("[%s] candidate message id=%s date=%s", username, msg.id, msg.date)
                     raw_text = (msg.message or "").strip()
 
                     if not raw_text and not settings.include_empty_text:
@@ -142,12 +163,12 @@ async def run_scrape(settings: Settings) -> None:
                     language, text_en, title = _translate_and_title(settings, original_text)
 
                     record: Dict[str, Any] = {
-                            "title": title,
-                            "url": url,
-                            "text": text_en,  # canonical text = English
-                            "source": username,
-                            "scraped_at": msg.date,
-                        }
+                        "title": title,
+                        "url": url,
+                        "text": text_en,  # canonical text = English
+                        "source": username,
+                        "scraped_at": msg.date,
+                    }
 
                     if repo is not None:
                         sentiment_result = get_sentiment(text_en)
@@ -159,29 +180,33 @@ async def run_scrape(settings: Settings) -> None:
                         try:
                             categorization_result = get_topic(text_en)
                         except Exception as e:
-                            print(f"[{username}] topic classification failed: {e}")
+                            logger.warning("[%s] topic classification failed: %s", username, e)
                         categorization_result_to_insert = categorization_result.top_label if categorization_result else None
-                        print(f"[{username}] sentiment={sentiment_result_to_insert} topic={categorization_result_to_insert}")
-                        inserted_id = repo.upsert_article(
-                            {
-                                **record,
-                                "text_original": original_text,
-                                "text_en": text_en,
-                                "language": language,
-                                "external_id": msg.id,
-                                "telegram_date": msg.date,
-                                "telegram_channel": username,
-                                "telegram_url": f"https://t.me/{username}/{msg.id}",
-                                "main_source": "telegram",
-                                "sentiment": sentiment_result_to_insert,
-                                "topic": categorization_result_to_insert,
-                            }
+                        logger.debug(
+                            "[%s] sentiment=%s topic=%s",
+                            username,
+                            sentiment_result_to_insert,
+                            categorization_result_to_insert,
                         )
+                        article_doc = {
+                            **record,
+                            "text_original": original_text,
+                            "text_en": text_en,
+                            "language": language,
+                            "external_id": msg.id,
+                            "telegram_date": msg.date,
+                            "telegram_channel": username,
+                            "telegram_url": f"https://t.me/{username}/{msg.id}",
+                            "main_source": "telegram",
+                            "sentiment": sentiment_result_to_insert,
+                            "topic": categorization_result_to_insert,
+                        }
+                        inserted_id = repo.upsert_article(article_doc)
                         if inserted_id:
-                            print(f"[{username}] stored {msg.id} as _id={inserted_id}")
-                            send_to_all_webhooks(inserted_id)
+                            logger.info("[%s] stored message id=%s", username, msg.id)
+                            send_to_all_webhooks({"article_id": inserted_id, **article_doc})
                         else:
-                            print(f"[{username}] skipped duplicate {msg.id} for channel")
+                            logger.info("[%s] skipped duplicate message id=%s", username, msg.id)
                     else:
                         # Optional JSONL fallback / audit log
                         write_jsonl(settings.out_jsonl, record)
@@ -190,7 +215,7 @@ async def run_scrape(settings: Settings) -> None:
                     state[username] = {"last_id": msg.id}
                     save_state(settings.state_file, state)
             except (UsernameInvalidError, UsernameNotOccupiedError) as e:
-                print(f"[{username}] SKIP: invalid/unknown username ({e.__class__.__name__})")
+                logger.warning("[%s] skipped invalid/unknown username: %s", username, e.__class__.__name__)
                 continue
 
-            print(f"[{username}] done")
+            logger.info("[%s] done", username)

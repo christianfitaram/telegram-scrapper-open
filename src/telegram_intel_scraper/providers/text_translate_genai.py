@@ -19,7 +19,7 @@ def _get_genai_modules():
         from google import genai
         from google.genai import types
     except Exception as exc:
-        raise RuntimeError("google-genai is not installed. Run: poetry add google-genai") from exc
+        raise RuntimeError("Google GenAI support requires the 'genai' extra.") from exc
     return genai, types
 
 def detect_translate_and_title(

@@ -11,6 +11,7 @@ from typing import Optional
 from dotenv import load_dotenv
 
 from telegram_intel_scraper.core.config import Settings
+from telegram_intel_scraper.core.logging import configure_logging
 from telegram_intel_scraper.core.scrape import run_scrape
 
 
@@ -77,6 +78,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     _load_env()
+    configure_logging()
     settings = Settings.from_env()
 
     args = _build_arg_parser().parse_args()

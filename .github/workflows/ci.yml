@@ -24,3 +24,9 @@ jobs:
 
       - name: Run tests
         run: poetry run pytest
+
+      - name: Run lint
+        run: poetry run ruff check .
+
+      - name: Run compile check
+        run: poetry run python -m compileall src tests

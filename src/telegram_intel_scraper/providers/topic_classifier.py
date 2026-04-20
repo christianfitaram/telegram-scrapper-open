@@ -24,10 +24,7 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Optional, Sequence
-
-import torch
-from transformers import AutoModelForSequenceClassification, AutoTokenizer, pipeline
+from typing import Any, Iterable, List, Optional, Sequence
 
 MODEL_NAME = "facebook/bart-large-mnli"
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -48,15 +45,24 @@ DEFAULT_TOPICS: List[str] = [
     "travel and tourism",
 ]
 
-# Device detection: prefer CUDA, then MPS, else CPU
-TORCH_DEVICE = torch.device("cpu")
-PIPELINE_DEVICE = -1
-if torch.cuda.is_available():
-    TORCH_DEVICE = torch.device("cuda:0")
-    PIPELINE_DEVICE = 0
-elif getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
-    TORCH_DEVICE = torch.device("mps")
-    PIPELINE_DEVICE = -1  # HF pipeline expects int indices; keep CPU index
+def _load_transformers_modules() -> tuple[Any, Any, Any, Any]:
+    try:
+        import torch
+        from transformers import AutoModelForSequenceClassification, AutoTokenizer, pipeline
+    except ImportError as exc:
+        raise RuntimeError("Local topic classification requires the 'local-ai' extra.") from exc
+    return torch, AutoModelForSequenceClassification, AutoTokenizer, pipeline
+
+
+def _select_devices(torch_module: Any) -> tuple[Any, int]:
+    torch_device = torch_module.device("cpu")
+    pipeline_device = -1
+    if torch_module.cuda.is_available():
+        torch_device = torch_module.device("cuda:0")
+        pipeline_device = 0
+    elif getattr(torch_module.backends, "mps", None) and torch_module.backends.mps.is_available():
+        torch_device = torch_module.device("mps")
+    return torch_device, pipeline_device
 
 @dataclass(frozen=True)
 class TopicResult:
@@ -88,27 +94,30 @@ class TopicClassifier:
         self.model_name = model_name
         self.cache_dir = cache_dir
         self.candidate_labels = list(candidate_labels) if candidate_labels else list(DEFAULT_TOPICS)
+        torch_module, auto_model, auto_tokenizer, pipeline_factory = _load_transformers_modules()
+        self.pipeline_factory = pipeline_factory
+        self.torch_device, self.pipeline_device = _select_devices(torch_module)
 
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name, cache_dir=cache_dir)
-        self.model = AutoModelForSequenceClassification.from_pretrained(model_name, cache_dir=cache_dir)
+        self.tokenizer = auto_tokenizer.from_pretrained(model_name, cache_dir=cache_dir)
+        self.model = auto_model.from_pretrained(model_name, cache_dir=cache_dir)
         try:
-            self.model.to(TORCH_DEVICE)
+            self.model.to(self.torch_device)
         except Exception:
             pass
         self.pipeline = self._create_pipeline_with_fallback()
 
     def _create_pipeline_with_fallback(self):
         try:
-            return pipeline(
+            return self.pipeline_factory(
                 task="zero-shot-classification",
                 model=self.model,
                 tokenizer=self.tokenizer,
-                device=PIPELINE_DEVICE,
+                device=self.pipeline_device,
                 max_length=512,
                 truncation=True,
             )
         except Exception:
-            return pipeline(
+            return self.pipeline_factory(
                 task="zero-shot-classification",
                 model=self.model,
                 tokenizer=self.tokenizer,

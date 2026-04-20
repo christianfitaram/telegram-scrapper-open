@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-from typing import Optional
 
 from telegram_intel_scraper.utils.text import normalize_whitespace
 
@@ -15,7 +14,7 @@ def _get_genai_client(api_key: str):
     try:
         from google import genai
     except Exception as exc:
-        raise RuntimeError("google-genai is not installed. Run: poetry add google-genai") from exc
+        raise RuntimeError("Google GenAI support requires the 'genai' extra.") from exc
     return genai.Client(api_key=api_key)
 
 

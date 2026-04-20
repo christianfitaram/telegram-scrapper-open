@@ -1,5 +1,8 @@
 # telegram-scraper
 
+[![CI](https://github.com/christianfitaram/telegram-scrapper-open/actions/workflows/ci.yml/badge.svg)](https://github.com/christianfitaram/telegram-scrapper-open/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 `telegram-scraper` is a Telegram channel ingestion tool for developers who want a reusable pipeline rather than a fixed data source list. It scrapes user-supplied Telegram channels, normalizes messages, can translate and title content with pluggable AI providers, stores records in MongoDB, and can forward inserted articles to downstream webhooks.
 
 ## Features
@@ -20,12 +23,23 @@
 
 ## Installation
 
+Minimal install:
+
 ```bash
 poetry install
 cp .env.example .env
 ```
 
 Fill in `.env` with your own values before running the scraper.
+
+Install optional integrations as needed:
+
+```bash
+poetry install --extras mongo
+poetry install --extras genai
+poetry install --extras local-ai
+poetry install --all-extras
+```
 
 ## Configuration
 
@@ -41,6 +55,7 @@ Common optional settings:
 
 - `AI_PROVIDER=heuristic|ollama|genai`
 - `TRANSLATE_TO_EN=0|1`
+- `LOG_LEVEL=INFO|DEBUG|WARNING`
 - `MONGO_URI`
 - `OUT_JSONL`
 - `SCRAPE_SINCE`
@@ -52,6 +67,7 @@ Provider-specific settings:
   - `AI_PROVIDER=ollama`
   - `OLLAMA_URL`
   - `OLLAMA_MODEL`
+  - `OLLAMA_FALLBACK_MODELS`
 - Google GenAI:
   - `AI_PROVIDER=genai`
   - `GOOGLE_API_KEY`
@@ -60,10 +76,41 @@ Provider-specific settings:
 Optional integrations:
 
 - MongoDB persistence uses `MONGO_URI`, `MONGO_DB`, and `MONGO_COLLECTION`.
-- Downstream webhook delivery uses `NEWSAPI_KEY`, `NEWS_API_BASE_URL`, `WEBHOOK_URL`, and `WEBHOOK_URL_THREAD_EVENTS`.
+- Downstream webhook delivery uses `WEBHOOK_URLS` or the legacy single `WEBHOOK_URL`.
+- Webhook payload signing uses `WEBHOOK_SIGNATURE` when set.
 - Sentiment and topic classifiers can use `TRANSFORMERS_CACHE` to control the local Hugging Face cache path.
 
-If webhook or external article lookup settings are unset, those integrations are skipped.
+If webhook settings are unset, delivery is skipped.
+
+## Architecture
+
+The pipeline is intentionally small and explicit:
+
+1. `providers.telegram` paginates Telegram messages and yields them oldest-to-newest.
+2. `core.scrape` normalizes text, applies optional translation/title generation, and enriches MongoDB records.
+3. `repositories.articles_repository` persists records with unique indexes for channel/message deduplication.
+4. `core.state` checkpoints the last processed message ID per channel.
+5. `providers.call_to_webhook` optionally posts inserted article payloads to configured downstream webhooks.
+
+## Reliability Model
+
+- Resume state is written after each processed message.
+- MongoDB writes use unique indexes for `telegram_channel + external_id`.
+- JSONL output is available when MongoDB is not configured.
+- Optional integrations are skipped when their configuration is absent.
+- Webhook delivery uses retry/backoff for transient HTTP failures.
+- GenAI failures fall back to configured Ollama models for title and translation tasks before using deterministic heuristics.
+
+## Provider Matrix
+
+| Capability | Default | Optional Providers |
+| --- | --- | --- |
+| Telegram ingestion | Telethon | - |
+| Title generation | Heuristic | Ollama, Google GenAI |
+| Translation | Disabled | Ollama, Google GenAI |
+| Persistence | JSONL | MongoDB |
+| Sentiment/topic enrichment | Local Hugging Face models when MongoDB is enabled | Configurable cache via `TRANSFORMERS_CACHE` |
+| Webhook delivery | Disabled | Any HTTP endpoint accepting JSON |
 
 ## Usage
 
@@ -109,10 +156,11 @@ Run tests:
 poetry run pytest
 ```
 
-Run a syntax check:
+Run lint and syntax checks:
 
 ```bash
-python3 -m py_compile $(rg --files src tests)
+poetry run ruff check .
+python -m compileall src tests
 ```
 
 ## Project Standards

@@ -1,20 +1,22 @@
 from __future__ import annotations
-import requests
+
+from telegram_intel_scraper.providers import ollama_provider
 
 
 def generate_title_ollama(text: str, ollama_url: str, ollama_model: str) -> str:
-    prompt = (
-        "Generate a short news-style title (max 12 words) for this Telegram message. "
-        "Return ONLY the title.\n\n"
-        f"Message:\n{text[:2500]}"
-    )
+    return ollama_provider.generate_title(text, ollama_url, ollama_model)
 
-    r = requests.post(
-        ollama_url,
-        json={"model": ollama_model, "prompt": prompt, "stream": False},
-        timeout=60,
-    )
-    r.raise_for_status()
-    title = (r.json().get("response") or "").strip()
-    return title[:120] if title else "Telegram message"
 
+def generate_title_ollama_with_fallback(
+    text: str,
+    ollama_url: str,
+    primary_model: str | None = None,
+    *,
+    include_primary: bool = False,
+) -> str:
+    return ollama_provider.with_ollama_fallbacks(
+        lambda model: generate_title_ollama(text, ollama_url, model),
+        label="title",
+        primary_model=primary_model,
+        include_primary=include_primary,
+    )

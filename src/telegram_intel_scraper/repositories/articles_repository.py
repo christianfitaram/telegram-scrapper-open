@@ -3,9 +3,19 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Dict, Any, Optional
 
-from pymongo import ASCENDING
-from pymongo.collection import Collection
-from pymongo.errors import DuplicateKeyError
+from telegram_intel_scraper.core.logging import get_logger
+
+logger = get_logger(__name__)
+ASCENDING = 1
+
+try:
+    from pymongo.collection import Collection
+    from pymongo.errors import DuplicateKeyError
+except ImportError:
+    Collection = Any  # type: ignore[misc, assignment]
+
+    class DuplicateKeyError(Exception):
+        pass
 
 
 class ArticlesRepository:
@@ -35,7 +45,6 @@ class ArticlesRepository:
         Insert the document if the telegram_channel + external_id combo is new.
         Returns the new `_id` as a string when inserted, or None when skipped.
         """
-        print("doc to insert:", doc)
         now = datetime.utcnow()
         insert_doc = {
             **doc,
@@ -48,4 +57,9 @@ class ArticlesRepository:
             inserted_id = result.inserted_id
             return str(inserted_id) if inserted_id is not None else None
         except DuplicateKeyError:
+            logger.debug(
+                "duplicate article skipped source=%s external_id=%s",
+                doc.get("source"),
+                doc.get("external_id"),
+            )
             return None

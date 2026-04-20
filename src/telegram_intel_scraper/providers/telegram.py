@@ -6,6 +6,10 @@ from typing import AsyncIterator, Optional, List
 from telethon import TelegramClient
 from telethon.tl.types import Message
 
+from telegram_intel_scraper.core.logging import get_logger
+
+logger = get_logger(__name__)
+
 
 def parse_username(tme_url: str) -> str:
     return tme_url.rstrip("/").split("/")[-1]
@@ -32,10 +36,16 @@ async def iter_channel_messages(
     offset_id = 0
     page_size = 200
 
-    print(f"[{username}] iter_channel_messages since={since} until={until} min_id_exclusive={min_id_exclusive}")
+    logger.debug(
+        "[%s] iter_channel_messages since=%s until=%s min_id_exclusive=%s",
+        username,
+        since,
+        until,
+        min_id_exclusive,
+    )
     while True:
         msgs: List[Message] = await client.get_messages(entity, limit=page_size, offset_id=offset_id)
-        print(f"[{username}] fetched page {offset_id} count={len(msgs)}")
+        logger.debug("[%s] fetched page offset_id=%s count=%s", username, offset_id, len(msgs))
         if not msgs:
             break
 
@@ -50,7 +60,7 @@ async def iter_channel_messages(
 
         stop_after_since = False
         # Yield in ascending order for deterministic downstream processing
-        print(f"[{username}] new_msgs ids={[m.id for m in new_msgs]}")
+        logger.debug("[%s] new message ids=%s", username, [m.id for m in new_msgs])
         for m in sorted(new_msgs, key=lambda x: x.id):
             # Telethon msg.date is typically timezone-aware UTC datetime
             if not m.date:
@@ -58,12 +68,12 @@ async def iter_channel_messages(
 
             # If message is newer than "until", skip it (but keep going; older ones may match)
             if until is not None and m.date > until:
-                print(f"[{username}] skip {m.id} newer-than-until ({m.date})")
+                logger.debug("[%s] skip message id=%s newer-than-until date=%s", username, m.id, m.date)
                 continue
 
             # If message is older than "since", we can stop entirely because pagination goes older from here
             if since is not None and m.date < since:
-                print(f"[{username}] stop: {m.id} older-than-since ({m.date})")
+                logger.debug("[%s] stop at message id=%s older-than-since date=%s", username, m.id, m.date)
                 stop_after_since = True
                 continue
 
