@@ -1,9 +1,13 @@
 # telegram-scraper
 
-[![CI](https://github.com/christianfitaram/telegram-scrapper-open/actions/workflows/ci.yml/badge.svg)](https://github.com/christianfitaram/telegram-scrapper-open/actions/workflows/ci.yml)
+[![CI](https://github.com/christianfitaram/telegram-scraper-open/actions/workflows/ci.yml/badge.svg)](https://github.com/christianfitaram/telegram-scraper-open/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 `telegram-scraper` is a Telegram channel ingestion tool for developers who want a reusable pipeline rather than a fixed data source list. It scrapes user-supplied Telegram channels, normalizes messages, can translate and title content with pluggable AI providers, stores records in MongoDB, and can forward inserted articles to downstream webhooks.
+
+## Why This Exists
+
+This repository is the public, reusable version of a production ingestion pipeline. It keeps the operational patterns that matter for reliability, including checkpointing, deduplication, optional integrations, and safe fallbacks, while leaving out proprietary data sources, business rules, and deployment details.
 
 ## Features
 
@@ -12,7 +16,7 @@
 - Generate titles with `heuristic`, `ollama`, or `genai`.
 - Optionally translate content to English before enrichment.
 - Store normalized records in MongoDB or write JSONL as a fallback.
-- Run sentiment and topic enrichment with Hugging Face models.
+- Optionally run sentiment and topic enrichment with Hugging Face models.
 - Forward inserted records to optional downstream webhooks.
 
 ## Requirements
@@ -41,6 +45,8 @@ poetry install --extras local-ai
 poetry install --all-extras
 ```
 
+Use `local-ai` only when enabling local sentiment/topic enrichment.
+
 ## Configuration
 
 Required:
@@ -55,6 +61,7 @@ Common optional settings:
 
 - `AI_PROVIDER=heuristic|ollama|genai`
 - `TRANSLATE_TO_EN=0|1`
+- `ENABLE_LOCAL_ENRICHMENT=0|1`
 - `LOG_LEVEL=INFO|DEBUG|WARNING`
 - `MONGO_URI`
 - `OUT_JSONL`
@@ -78,6 +85,7 @@ Optional integrations:
 - MongoDB persistence uses `MONGO_URI`, `MONGO_DB`, and `MONGO_COLLECTION`.
 - Downstream webhook delivery uses `WEBHOOK_URLS` or the legacy single `WEBHOOK_URL`.
 - Webhook payload signing uses `WEBHOOK_SIGNATURE` when set.
+- Local sentiment/topic enrichment requires `ENABLE_LOCAL_ENRICHMENT=1` and the `local-ai` extra.
 - Sentiment and topic classifiers can use `TRANSFORMERS_CACHE` to control the local Hugging Face cache path.
 
 If webhook settings are unset, delivery is skipped.
@@ -87,7 +95,7 @@ If webhook settings are unset, delivery is skipped.
 The pipeline is intentionally small and explicit:
 
 1. `providers.telegram` paginates Telegram messages and yields them oldest-to-newest.
-2. `core.scrape` normalizes text, applies optional translation/title generation, and enriches MongoDB records.
+2. `core.scrape` normalizes text, applies optional translation/title generation, and can enrich MongoDB records.
 3. `repositories.articles_repository` persists records with unique indexes for channel/message deduplication.
 4. `core.state` checkpoints the last processed message ID per channel.
 5. `providers.call_to_webhook` optionally posts inserted article payloads to configured downstream webhooks.
@@ -98,6 +106,7 @@ The pipeline is intentionally small and explicit:
 - MongoDB writes use unique indexes for `telegram_channel + external_id`.
 - JSONL output is available when MongoDB is not configured.
 - Optional integrations are skipped when their configuration is absent.
+- Local sentiment/topic enrichment is disabled by default so MongoDB users do not need heavy ML dependencies unless they opt in.
 - Webhook delivery uses retry/backoff for transient HTTP failures.
 - GenAI failures fall back to configured Ollama models for title and translation tasks before using deterministic heuristics.
 
@@ -109,7 +118,7 @@ The pipeline is intentionally small and explicit:
 | Title generation | Heuristic | Ollama, Google GenAI |
 | Translation | Disabled | Ollama, Google GenAI |
 | Persistence | JSONL | MongoDB |
-| Sentiment/topic enrichment | Local Hugging Face models when MongoDB is enabled | Configurable cache via `TRANSFORMERS_CACHE` |
+| Sentiment/topic enrichment | Disabled | Local Hugging Face models via `ENABLE_LOCAL_ENRICHMENT=1` and `local-ai` |
 | Webhook delivery | Disabled | Any HTTP endpoint accepting JSON |
 
 ## Usage
@@ -146,7 +155,7 @@ Each processed message is normalized into a record shaped roughly like:
 }
 ```
 
-When MongoDB is configured, stored records can also include Telegram metadata, original text, language, sentiment, and topic fields.
+When MongoDB is configured, stored records can also include Telegram metadata, original text, and language fields. Sentiment and topic fields are populated when local enrichment is enabled.
 
 ## Development
 

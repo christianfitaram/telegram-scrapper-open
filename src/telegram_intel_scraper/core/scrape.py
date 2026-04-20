@@ -171,17 +171,26 @@ async def run_scrape(settings: Settings) -> None:
                     }
 
                     if repo is not None:
-                        sentiment_result = get_sentiment(text_en)
-                        sentiment_result_to_insert = {
-                            "label": sentiment_result.label if sentiment_result else None,
-                            "score": sentiment_result.score if sentiment_result else None,
-                        }
-                        categorization_result = None
-                        try:
-                            categorization_result = get_topic(text_en)
-                        except Exception as e:
-                            logger.warning("[%s] topic classification failed: %s", username, e)
-                        categorization_result_to_insert = categorization_result.top_label if categorization_result else None
+                        sentiment_result_to_insert = {"label": None, "score": None}
+                        categorization_result_to_insert = None
+
+                        if settings.enable_local_enrichment:
+                            sentiment_result = get_sentiment(text_en)
+                            sentiment_result_to_insert = {
+                                "label": sentiment_result.label if sentiment_result else None,
+                                "score": sentiment_result.score if sentiment_result else None,
+                            }
+                            categorization_result = None
+                            try:
+                                categorization_result = get_topic(text_en)
+                            except Exception as e:
+                                logger.warning("[%s] topic classification failed: %s", username, e)
+                            categorization_result_to_insert = (
+                                categorization_result.top_label if categorization_result else None
+                            )
+                        else:
+                            logger.debug("[%s] local enrichment skipped", username)
+
                         logger.debug(
                             "[%s] sentiment=%s topic=%s",
                             username,

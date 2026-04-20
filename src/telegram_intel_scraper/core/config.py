@@ -47,6 +47,7 @@ class Settings:
     scrape_since: Optional[datetime]
     scrape_until: Optional[datetime]
     translate_to_en: bool
+    enable_local_enrichment: bool
 
 
     @staticmethod
@@ -99,5 +100,5 @@ class Settings:
             scrape_since=_parse_utc_iso(os.getenv("SCRAPE_SINCE")),
             scrape_until=_parse_utc_iso(os.getenv("SCRAPE_UNTIL")),
             translate_to_en=os.getenv("TRANSLATE_TO_EN", "0").lower() in ("1", "true", "yes"),
-
+            enable_local_enrichment=os.getenv("ENABLE_LOCAL_ENRICHMENT", "0").lower() in ("1", "true", "yes"),
         )

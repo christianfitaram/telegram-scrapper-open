@@ -25,6 +25,7 @@ def _settings() -> Settings:
         scrape_since=None,
         scrape_until=None,
         translate_to_en=False,
+        enable_local_enrichment=False,
     )
 
 

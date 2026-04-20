@@ -39,3 +39,17 @@ def test_ai_provider_falls_back_to_legacy_title_provider(monkeypatch: pytest.Mon
     settings = Settings.from_env()
 
     assert settings.ai_provider == "ollama"
+
+
+def test_local_enrichment_is_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
+    _base_env(monkeypatch)
+
+    settings = Settings.from_env()
+
+    assert settings.enable_local_enrichment is False
+
+    monkeypatch.setenv("ENABLE_LOCAL_ENRICHMENT", "1")
+
+    settings = Settings.from_env()
+
+    assert settings.enable_local_enrichment is True
