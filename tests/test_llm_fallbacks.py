@@ -36,6 +36,7 @@ def test_default_ollama_fallback_order(monkeypatch) -> None:
         "gpt-oss:120b-cloud",
         "gemma4:31b-cloud",
         "gpt-oss:20b-cloud",
+        "gemma2:9b",
     ]
 
 

@@ -11,7 +11,7 @@ from telegram_intel_scraper.utils.text import normalize_whitespace
 
 logger = get_logger(__name__)
 
-DEFAULT_FALLBACK_MODELS = ("gpt-oss:120b-cloud", "gemma4:31b-cloud", "gpt-oss:20b-cloud")
+DEFAULT_FALLBACK_MODELS = ("gpt-oss:120b-cloud", "gemma4:31b-cloud", "gpt-oss:20b-cloud", "gemma2:9b")
 T = TypeVar("T")
 
 
